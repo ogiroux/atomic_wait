@@ -26,19 +26,21 @@ THE SOFTWARE.
 
 This file introduces std::atomic_wait, atomic_notify_one, atomic_notify_all.
 
-Strategies:
+It has these strategies implemented:
  * Contention table. Used to optimize futex notify, or to hold CVs. Disable with __NO_TABLE.
- * Futex. Supported on Linux and Windows. Requires table on Linux. Disable with __NO_FUTEX.
- * Condition variables. Supported on Linux and Mac. Requires table. Disable with __NO_CONDVAR.
+ * Futex. Supported on Linux and Windows. For performance requires a table on Linux. Disable with __NO_FUTEX.
+ * Condition variables. Supported on Linux and Mac. Requires table to function. Disable with __NO_CONDVAR.
  * Timed back-off. Supported on everything. Disable with __NO_SLEEP.
- * Spinlock. Supported on everything. Force with __NO_IDENT.
+ * Spinlock. Supported on everything. Force with __NO_IDENT. Note: performance is too terrible to use.
 
-Strategy selection by platform:
- * Linux: default to futex (table), fallback to CVs -> timed backoff -> spin.
+You can also compare to pure spinning at algorithm level with __NO_WAIT.
+
+The strategy is chosen this way, by platform:
+ * Linux: default to futex (with table), fallback to futex (no table) -> CVs -> timed backoff -> spin.
  * Mac: default to CVs (table), fallback to timed backoff -> spin.
  * Windows: default to futex (no table), fallback to timed backoff -> spin.
- * CUDA: default to timed backoff, fallback to spin.
- * Unidentified: default to spin.
+ * CUDA: default to timed backoff, fallback to spin. (This is not all checked in in this tree.)
+ * Unidentified platform: default to spin.
 
 */
 
