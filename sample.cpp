@@ -46,7 +46,10 @@ Strategy selection by platform:
 //#define __NO_FUTEX
 //#define __NO_CONDVAR
 //#define __NO_SLEEP
-#define __NO_IDENT
+//#define __NO_IDENT
+
+// To benchmark against spinning
+//#define __NO_WAIT
 
 ///////////// IMPLEMENTATION /////////////////////////////////////////////////////////////////
 ///////////// IMPLEMENTATION /////////////////////////////////////////////////////////////////
@@ -362,11 +365,16 @@ namespace std {
 struct mutex {
 	void lock() noexcept {
 		while (1 == l.exchange(1, std::memory_order_acquire))
-			atomic_wait(l, 1, std::memory_order_relaxed);
+#ifndef __NO_WAIT
+			atomic_wait(l, 1, std::memory_order_relaxed)
+#endif
+            ;
 	}
 	void unlock() noexcept {
 		l.store(0, std::memory_order_release);
+#ifndef __NO_WAIT
 		atomic_notify_one(l);
+#endif
 	}
 	std::atomic<int> l = ATOMIC_VAR_INIT(0);
 };
@@ -378,19 +386,48 @@ struct ticket_mutex {
             auto const now = out.load(std::memory_order_acquire);
             if(now == my)
                 return;
+#ifndef __NO_WAIT
             atomic_wait(out, now, std::memory_order_relaxed);
+#endif
         }
 	}
 	void unlock() noexcept {
 		out.fetch_add(1, std::memory_order_release);
+#ifndef __NO_WAIT
 		atomic_notify_all(out);
+#endif
 	}
 	alignas(64) std::atomic<int> in = ATOMIC_VAR_INIT(0);
     alignas(64) std::atomic<int> out = ATOMIC_VAR_INIT(0);
 };
 
+struct barrier {
+    barrier(uint32_t count) : arrived(count), expected(count) { 
+    }
+	void arrive_and_wait() noexcept {
+        auto const old_phase = phase.load(std::memory_order_relaxed);
+        auto const result = arrived.fetch_sub(1, std::memory_order_release) - 1;
+        if(0 == result) {
+            arrived.store(expected, std::memory_order_relaxed);
+            phase.store(old_phase + 1, std::memory_order_release);
+#ifndef __NO_WAIT
+            atomic_notify_all(phase);
+#endif
+        }
+        else
+            while(old_phase == phase.load(std::memory_order_acquire))
+#ifndef __NO_WAIT
+            atomic_wait(phase, old_phase, std::memory_order_relaxed)
+#endif
+            ;
+	}
+    alignas(64) std::atomic<unsigned> phase = ATOMIC_VAR_INIT(0);
+    alignas(64) std::atomic<unsigned> arrived = ATOMIC_VAR_INIT(0);
+	uint32_t const expected;
+};
+
 template <class F>
-void test(char const* name, int threads, F && f) {
+void test(std::string const& name, int threads, F && f) {
 
 	auto const t1 = std::chrono::steady_clock::now();
 
@@ -408,34 +445,55 @@ void test(char const* name, int threads, F && f) {
 	auto const t2 = std::chrono::steady_clock::now();
 
 	double const d = double(std::chrono::duration_cast<std::chrono::nanoseconds>(t2 - t1).count());
-	std::cout << name << " : " << d / sections << "ns per section.\n";
+	std::cout << name << " : " << d / sections << "ns per section." << std::endl;
 }
+
+#ifndef NOMAIN
 
 int main() {
 
-	mutex m;
-    auto f = [&](int n) {
-		for (int i = 0; i < n; ++i) {
-			m.lock();
-			m.unlock();
-		}
-	};
+    int const max = std::thread::hardware_concurrency();
+    std::cout << "System has " << max << " hardware threads." << std::endl;
 
-	test("1", 1, f);
-	test("2", 2, f);
-	test("128", 128, f);
+    std::vector<std::pair<int, std::string>> const counts = 
+        { { 1, "1 thread" }, 
+          { 2, "2 threads" },
+          { max, "full occupancy" },
+          { max * 2, "double occupancy" } };
 
-	ticket_mutex t;
-    auto g = [&](int n) {
-		for (int i = 0; i < n; ++i) {
-			t.lock();
-			t.unlock();
-		}
-	};
+    for(auto const& c : counts) {
+        mutex m;
+        auto f = [&](int n) {
+            for (int i = 0; i < n; ++i) {
+                m.lock();
+                m.unlock();
+            }
+        };
+	    test("Spinlock: " + c.second, c.first, f);
+    }
 
-	test("1", 1, g);
-	test("2", 2, g);
-	test("max", std::thread::hardware_concurrency(), g);
+    for(auto const& c : counts) {
+        ticket_mutex t;
+        auto g = [&](int n) {
+            for (int i = 0; i < n/16; ++i) {
+                t.lock();
+                t.unlock();
+            }
+        };
+	    test("Ticket: " + c.second, c.first, g);
+    }
+
+    for(auto const& c : counts) {
+        barrier b(c.first);
+        auto h = [&](int n) {
+            for (int i = 0; i < n/16; ++i)
+                b.arrive_and_wait();
+        };
+        test("Barrier: " + c.second, c.first, h);
+    }
 
 	return 0;
 }
+
+#endif
+
