@@ -193,6 +193,21 @@ Strategy selection by platform:
     contended_t * __contention(volatile void const * p) {
         return contention + ((uintptr_t)p & 255);
     }
+#else
+    template <class _Tp>
+    __ABI void __cxx_atomic_try_wait_slow_fallback(_Tp const* ptr, _Tp val, int order) {
+    #ifndef __NO_SLEEP
+        long history = 10;
+        do {
+            __SLEEP(history >> 2);
+            history += history >> 2;
+            if (history > (1 << 10))
+                history = 1 << 10;
+        } while (__atomic_load_n(ptr, order) == val);
+    #else
+        __YIELD();
+    #endif
+    }
 #endif // __TABLE
 
 #if defined(__CONDVAR)
@@ -226,15 +241,15 @@ Strategy selection by platform:
 
 #elif defined(__FUTEX)
 
-    #if defined(__TABLE)
-
         template <class _Tp, typename std::enable_if<!__type_used_directly(_Tp), int>::type = 1>
         void __cxx_atomic_notify_all(_Tp const* ptr) {
+    #if defined(__TABLE)
             auto * const c = __contention(ptr);
             __atomic_fetch_add(&c->version, 1, __ATOMIC_RELAXED);
             __atomic_thread_fence(__ATOMIC_SEQ_CST);
             if (0 != __atomic_exchange_n(&c->waiters, 0, __ATOMIC_RELAXED))
                 __do_direct_wake(&c->version, true);
+    #endif
         }
         template <class _Tp, typename std::enable_if<!__type_used_directly(_Tp), int>::type = 1>
         void __cxx_atomic_notify_one(_Tp const* ptr) {
@@ -242,6 +257,7 @@ Strategy selection by platform:
         }
         template <class _Tp, typename std::enable_if<!__type_used_directly(_Tp), int>::type = 1>
         void __cxx_atomic_try_wait_slow(_Tp const* ptr, _Tp const val, int order) {
+    #if defined(__TABLE)
             auto * const c = __contention(ptr);
             __atomic_store_n(&c->waiters, 1, __ATOMIC_RELAXED);
             __atomic_thread_fence(__ATOMIC_SEQ_CST);
@@ -254,9 +270,10 @@ Strategy selection by platform:
         #else
             __do_direct_wait(&c->version, version, nullptr);
         #endif
-        }
-
+    #else
+        __cxx_atomic_try_wait_slow_fallback(ptr, val, order);
     #endif // __TABLE
+        }
 
     template <class _Tp, typename std::enable_if<__type_used_directly(_Tp), int>::type = 1>
     void __cxx_atomic_try_wait_slow(_Tp const* ptr, _Tp val, int order) {
@@ -293,24 +310,12 @@ Strategy selection by platform:
 
     template <class _Tp>
     __ABI void __cxx_atomic_try_wait_slow(_Tp const* ptr, _Tp val, int order) {
-    #ifndef __NO_SLEEP
-        long history = 10;
-        do {
-            __SLEEP(history >> 2);
-            history += history >> 2;
-            if (history > (1 << 10))
-                history = 1 << 10;
-        } while (__atomic_load_n(ptr, order) == val);
-    #else
-        __YIELD();
-    #endif
+        __cxx_atomic_try_wait_slow_fallback(ptr, val, order);
     }
     template <class _Tp>
-    __ABI void __cxx_atomic_notify_one(_Tp const* ptr) {
-    }
+    __ABI void __cxx_atomic_notify_one(_Tp const* ptr) { }
     template <class _Tp>
-    __ABI void __cxx_atomic_notify_all(_Tp const* ptr) {
-    }
+    __ABI void __cxx_atomic_notify_all(_Tp const* ptr) { }
 
 #endif // __FUTEX || __CONDVAR
 
@@ -331,11 +336,11 @@ __ABI void __cxx_atomic_wait(_Tp const* ptr, _Tp const val, int order) {
 
 namespace std {
 
-    template <class _Tp>
-    __ABI void atomic_wait(atomic<_Tp> const& a, _Tp val, 
+    template <class _Tp, class _Tv>
+    __ABI void atomic_wait(atomic<_Tp> const& a, _Tv val, 
                            std::memory_order order = std::memory_order_seq_cst) {
 
-        __cxx_atomic_wait((const _Tp*)&a, val, (int)order);
+        __cxx_atomic_wait((const _Tp*)&a, (_Tp)val, (int)order);
     }
 
     template <class _Tp>
@@ -496,4 +501,3 @@ int main() {
 }
 
 #endif
-
