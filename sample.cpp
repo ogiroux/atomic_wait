@@ -475,7 +475,7 @@ int main() {
     for(auto const& c : counts) {
         ticket_mutex t;
         auto g = [&](int n) {
-            for (int i = 0; i < n/16; ++i) {
+            for (int i = 0; i < n; ++i) {
                 t.lock();
                 t.unlock();
             }
@@ -486,7 +486,7 @@ int main() {
     for(auto const& c : counts) {
         barrier b(c.first);
         auto h = [&](int n) {
-            for (int i = 0; i < n/16; ++i)
+            for (int i = 0; i < n; ++i)
                 b.arrive_and_wait();
         };
         test("Barrier: " + c.second, c.first, h);
