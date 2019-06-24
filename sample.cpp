@@ -67,9 +67,12 @@ The strategy is chosen this way, by platform:
 
 #if defined(__NO_IDENT)
 
+    #include <thread>
+    #include <chrono>
+
     #define __ABI
-    #define __YIELD()
-    #define __SLEEP(x)
+    #define __YIELD() std::this_thread::yield()
+    #define __SLEEP(x) std::this_thread::sleep_for(std::chrono::microseconds(x))
     #define __YIELD_PROCESSOR()
 
 #else
@@ -424,21 +427,19 @@ struct barrier {
         else
             while(old_phase == phase.load(std::memory_order_acquire))
 #ifndef __NO_WAIT
-            atomic_wait(phase, old_phase, std::memory_order_relaxed)
+                atomic_wait(phase, old_phase, std::memory_order_relaxed)
 #endif
-            ;
+                ;
 	}
     alignas(64) std::atomic<unsigned> phase = ATOMIC_VAR_INIT(0);
     alignas(64) std::atomic<unsigned> arrived = ATOMIC_VAR_INIT(0);
 	uint32_t const expected;
 };
 
+static constexpr int sections = 1 << 20;
+
 template <class F>
-void test(std::string const& name, int threads, F && f) {
-
-	auto const t1 = std::chrono::steady_clock::now();
-
-	int sections = 1 << 20;
+void test_body(int threads, F && f) {
 
 	std::vector<std::thread> ts(threads);
 	for (auto& t : ts)
@@ -448,6 +449,29 @@ void test(std::string const& name, int threads, F && f) {
 
 	for (auto& t : ts)
 		t.join();
+}
+
+template <class F>
+void test_omp_body(int threads, F && f) {
+#ifdef _OPENMP
+    #pragma omp parallel num_threads(threads)
+    {
+        f(sections / 16);
+    }
+#else
+    assert(0);
+#endif
+}
+
+template <class F>
+void test(std::string const& name, int threads, F && f, bool use_omp = false) {
+
+	auto const t1 = std::chrono::steady_clock::now();
+
+    if(use_omp)
+        test_omp_body(threads, f);
+    else
+        test_body(threads, f);
 
 	auto const t2 = std::chrono::steady_clock::now();
 
@@ -455,7 +479,7 @@ void test(std::string const& name, int threads, F && f) {
 	std::cout << name << " : " << d / sections << "ns per section." << std::endl;
 }
 
-#ifndef NOMAIN
+#ifndef __NO_MAIN
 
 int main() {
 
@@ -467,6 +491,8 @@ int main() {
           { 2, "2 threads" },
           { max, "full occupancy" },
           { max * 2, "double occupancy" } };
+
+#ifndef __NO_MUTEX
 
     for(auto const& c : counts) {
         mutex m;
@@ -490,6 +516,10 @@ int main() {
 	    test("Ticket: " + c.second, c.first, g);
     }
 
+#endif
+
+#ifndef __NO_BARRIER
+
     for(auto const& c : counts) {
         barrier b(c.first);
         auto h = [&](int n) {
@@ -497,7 +527,29 @@ int main() {
                 b.arrive_and_wait();
         };
         test("Barrier: " + c.second, c.first, h);
+
+#ifdef _POSIX_THREADS
+        pthread_barrier_t pb;
+        pthread_barrier_init(&pb, nullptr, c.first);
+        auto i = [&](int n) {
+            for (int i = 0; i < n; ++i)
+                pthread_barrier_wait(&pb);
+        };
+        test("Pthread: " + c.second, c.first, i);
+        pthread_barrier_destroy(&pb);
+#endif
+
+#ifdef _OPENMP
+        auto o = [&](int n) {
+            for (int i = 0; i < n; ++i) {
+                #pragma omp barrier
+            }
+        };
+	    test("OMP: " + c.second, c.first, o, true);
+#endif
     }
+
+#endif
 
 	return 0;
 }
