@@ -112,6 +112,7 @@ THE SOFTWARE.
 #if defined(_WIN32)
 
     #define __NO_SEM_BACK
+    #define __builtin_expect(a,b)
 
     static constexpr ptrdiff_t __semaphore_max = std::numeric_limits<long>::max();
     using __semaphore_sem_t = HANDLE;
@@ -145,8 +146,6 @@ THE SOFTWARE.
 #endif
 
 class __atomic_semaphore_base {
-
-    std::atomic<ptrdiff_t> count;
 
     __semaphore_no_inline bool __fetch_sub_if_slow(ptrdiff_t old) {
         while (old != 0) {
@@ -191,6 +190,7 @@ class __atomic_semaphore_base {
             std::this_thread::sleep_for(std::chrono::nanoseconds(sleep));
         }
     }
+    std::atomic<ptrdiff_t> count;
 
 public:
     static constexpr ptrdiff_t max() noexcept { 
@@ -212,7 +212,7 @@ public:
             atomic_notify_one(count);
     }
     inline void acquire() {
-        while (!__fetch_sub_if())
+        while (!try_acquire())
             __wait_slow();
     }
 
@@ -222,7 +222,7 @@ public:
     template <class Clock, class Duration>
     inline bool try_acquire_until(std::chrono::time_point<Clock, Duration> const& abs_time) {
 
-        if (__fetch_sub_if())
+        if (try_acquire())
             return true;
         else
             return __acquire_slow_timed(abs_time - Clock::now());
@@ -230,7 +230,7 @@ public:
     template <class Rep, class Period>
     inline bool try_acquire_for(std::chrono::duration<Rep, Period> const& rel_time) {
 
-        if (__fetch_sub_if())
+        if (try_acquire())
             return true;
         else
             return __acquire_slow_timed(rel_time);
@@ -348,18 +348,89 @@ using semaphore_base =
 
 template<ptrdiff_t least_max_value = INT_MAX>
 class counting_semaphore : public semaphore_base<least_max_value> {
-
     static_assert(least_max_value <= semaphore_base<least_max_value>::max(), "");
-public:
-    static constexpr ptrdiff_t max() noexcept {
-        return semaphore_base<least_max_value>::max();
-    }
 
+public:
     counting_semaphore(ptrdiff_t count = 0) : semaphore_base<least_max_value>(count) { }
     ~counting_semaphore() = default;
 
     counting_semaphore(const counting_semaphore&) = delete;
     counting_semaphore& operator=(const counting_semaphore&) = delete;
 };
+
+#ifdef __NO_SEM
+
+class __binary_semaphore_base {
+
+    __semaphore_no_inline bool __acquire_slow_timed(std::chrono::nanoseconds const& rel_time) {
+
+        using __clock = std::conditional<std::chrono::high_resolution_clock::is_steady, 
+                                         std::chrono::high_resolution_clock,
+                                         std::chrono::steady_clock>::type;
+
+        auto const start = __clock::now();
+        while (!try_acquire()) {
+            auto const elapsed = std::chrono::duration_cast<std::chrono::nanoseconds>(__clock::now() - start);
+            auto const delta = rel_time - elapsed;
+            if(delta <= std::chrono::nanoseconds(0))
+                return false;
+            auto const sleep = std::min((elapsed.count() >> 2) + 100, delta.count());
+            std::this_thread::sleep_for(std::chrono::nanoseconds(sleep));
+        }
+        return true;
+    }
+    std::atomic<int> available;
+
+public:
+    static constexpr ptrdiff_t max() noexcept { return 1; }
+
+    __binary_semaphore_base(ptrdiff_t available) : available(available) { }
+
+    ~__binary_semaphore_base() = default;
+
+    __binary_semaphore_base(__binary_semaphore_base const&) = delete;
+    __binary_semaphore_base& operator=(__binary_semaphore_base const&) = delete;
+
+    inline void release(ptrdiff_t update = 1) {
+        available.store(1, std::memory_order_release);
+        atomic_notify_one(available);
+    }
+    inline void acquire() {
+        while (!__builtin_expect(try_acquire(), 1))
+            atomic_wait(available, 0, std::memory_order_relaxed);
+    }
+
+    inline bool try_acquire() noexcept {
+        return 1 == available.exchange(0, std::memory_order_acquire);
+    }
+    template <class Clock, class Duration>
+    inline bool try_acquire_until(std::chrono::time_point<Clock, Duration> const& abs_time) {
+
+        if (__builtin_expect(try_acquire(), 1))
+            return true;
+        else
+            return __acquire_slow_timed(abs_time - Clock::now());
+    }
+    template <class Rep, class Period>
+    inline bool try_acquire_for(std::chrono::duration<Rep, Period> const& rel_time) {
+
+        if (__builtin_expect(try_acquire(), 1))
+            return true;
+        else
+            return __acquire_slow_timed(rel_time);
+    }
+};
+
+template<>
+class counting_semaphore<1> : public __binary_semaphore_base {
+public:
+    counting_semaphore(ptrdiff_t count = 0) : __binary_semaphore_base(count) { }
+    ~counting_semaphore() = default;
+
+    counting_semaphore(const counting_semaphore&) = delete;
+    counting_semaphore& operator=(const counting_semaphore&) = delete;
+};
+
+#endif // __NO_SEM
 
 using binary_semaphore = counting_semaphore<1>;
