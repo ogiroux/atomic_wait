@@ -138,7 +138,7 @@ The strategy is chosen this way, by platform:
 
     #include <intrin.h>
     template <class _Tp>
-    auto __atomic_load_n(_Tp const* a, int) -> decltype(*a) {
+    auto __atomic_load_n(_Tp const* a, int) -> typename std::remove_reference<decltype(*a)>::type {
         auto const t = *a;
         _ReadWriteBarrier();
         return t;
