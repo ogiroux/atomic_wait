@@ -22,6 +22,12 @@ THE SOFTWARE.
 
 */
 
+#include <mutex>
+#include <thread>
+#include <vector>
+#include <string>
+#include <iostream>
+
 #include "sample.hpp"
 
 static constexpr int sections = 1 << 20;

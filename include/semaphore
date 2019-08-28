@@ -22,11 +22,26 @@ THE SOFTWARE.
 
 */
 
+#include <algorithm>
 #include "atomic_wait"
 
 //#define __NO_SEM
 //#define __NO_SEM_BACK
 //#define __NO_SEM_FRONT
+
+#if defined(__APPLE__) || defined(__linux__)
+	#define __semaphore_no_inline __attribute__ ((noinline))
+#elif defined(_WIN32)
+	#define __semaphore_no_inline __declspec(noinline)
+    #include <Windows.h>
+	#undef min
+	#undef max
+	#if !defined(__ALWAYS_SEM) && !defined(__NO_SEM)
+		#define __NO_SEM
+	#endif
+#else
+	#error "This implementation doesn't support this platform."
+#endif
 
 #ifndef __NO_SEM
 
@@ -96,7 +111,6 @@ THE SOFTWARE.
 
 #if defined(_WIN32)
 
-    #include <Windows.h>
     #define __NO_SEM_BACK
 
     static constexpr ptrdiff_t __semaphore_max = std::numeric_limits<long>::max();
@@ -134,7 +148,7 @@ class __atomic_semaphore_base {
 
     std::atomic<ptrdiff_t> count;
 
-    __attribute__ ((noinline)) bool __fetch_sub_if_slow(ptrdiff_t old) {
+    __semaphore_no_inline bool __fetch_sub_if_slow(ptrdiff_t old) {
         while (old != 0) {
             if (count.compare_exchange_weak(old, old - 1, std::memory_order_acquire, std::memory_order_relaxed))
                 return true; 
@@ -150,7 +164,7 @@ class __atomic_semaphore_base {
             return true;
         return __fetch_sub_if_slow(old); // fail only if not available
     }
-    __attribute__ ((noinline)) void __wait_slow() {
+    __semaphore_no_inline void __wait_slow() {
         while (1) {
             ptrdiff_t const old = count.load(std::memory_order_acquire);
             if(old != 0)
@@ -158,7 +172,7 @@ class __atomic_semaphore_base {
             atomic_wait(count, old, std::memory_order_relaxed);
         }
     }
-    __attribute__ ((noinline)) bool __acquire_slow_timed(std::chrono::nanoseconds const& rel_time) {
+    __semaphore_no_inline bool __acquire_slow_timed(std::chrono::nanoseconds const& rel_time) {
 
         using __clock = std::conditional<std::chrono::high_resolution_clock::is_steady, 
                                          std::chrono::high_resolution_clock,

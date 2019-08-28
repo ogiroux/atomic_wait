@@ -22,13 +22,8 @@ THE SOFTWARE.
 
 */
 
-#include <mutex>
-#include <atomic>
-#include <thread>
-#include <vector>
-#include <iostream>
 #include <chrono>
-
+#include <atomic>
 #include <atomic_wait>
 #include <semaphore>
 #include <latch>
