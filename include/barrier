@@ -1,0 +1,140 @@
+/*
+
+Copyright (c) 2019, NVIDIA Corporation
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+THE SOFTWARE.
+
+*/
+
+#include "atomic_wait"
+
+class EmptyCompletionF {
+    void operator()() noexcept { }
+};
+
+template<class CompletionF = EmptyCompletionF>
+class barrier {
+public:
+    using arrival_token = unsigned;
+
+    barrier(ptrdiff_t count, CompletionF completion = CompletionF()) 
+        : phase(0), arrived(count), expected(count), completion(completion) { 
+    }
+
+    ~barrier() = default;
+
+    barrier(barrier const&) = delete;
+    barrier& operator=(barrier const&) = delete;
+
+    [[nodiscard]] arrival_token arrive(ptrdiff_t update = 1) {
+        auto const old_phase = phase.load(std::memory_order_relaxed);
+        auto const result = arrived.fetch_sub(update, std::memory_order_release) - update;
+        auto const new_expected = expected.load(std::memory_order_relaxed);
+        if(0 == result) {
+            completion();
+            arrived.store(new_expected, std::memory_order_relaxed);
+            phase.store(old_phase + 1, std::memory_order_release);
+#ifndef __NO_WAIT
+            atomic_notify_all(phase);
+#endif
+        }
+        return old_phase;
+    }
+    void wait(arrival_token&& arrival) const {
+        while(arrival == phase.load(std::memory_order_acquire))
+#ifndef __NO_WAIT
+            atomic_wait(phase, arrival, std::memory_order_relaxed)
+#endif
+            ;
+    }
+
+	void arrive_and_wait() {
+        wait(arrive());
+	}
+    void arrive_and_drop() {
+        expected.fetch_sub(1, std::memory_order_relaxed);
+        (void)arrive();
+    }
+
+private:
+    std::atomic<ptrdiff_t> phase, 
+                           arrived, 
+                           expected;
+    CompletionF completion;
+};
+
+template< >
+class barrier<EmptyCompletionF> {
+
+    static constexpr uint64_t phase_bit = 1ull << 63;
+    static constexpr uint64_t count_bit = 1ull << 32;
+    static constexpr uint64_t expected_mask = count_bit - 1;
+    static constexpr uint64_t arrived_mask = (phase_bit - 1) & ~expected_mask;
+
+    static inline constexpr uint64_t __init(ptrdiff_t count) noexcept {
+        uint64_t const comp = (1u << 31) - count;
+        return (comp << 32) | comp;
+    }
+
+public:
+    using arrival_token = uint64_t;
+
+    barrier(ptrdiff_t count, EmptyCompletionF = EmptyCompletionF()) 
+        : phase_arrived_expected(__init(count)) { 
+    }
+
+    ~barrier() = default;
+
+    barrier(barrier const&) = delete;
+    barrier& operator=(barrier const&) = delete;
+
+    [[nodiscard]] arrival_token arrive(ptrdiff_t update = 1) {
+
+        auto const old = phase_arrived_expected.fetch_add(count_bit, std::memory_order_acq_rel);
+        if((old ^ (old + count_bit)) & phase_bit) {
+            phase_arrived_expected.fetch_add((old & expected_mask) << 32, std::memory_order_relaxed);
+#ifndef __NO_WAIT
+            atomic_notify_all(phase_arrived_expected);
+#endif
+        }
+        return old;
+    }
+    void wait(arrival_token&& arrival) const {
+
+        while(1) {
+            uint64_t const current = phase_arrived_expected.load(std::memory_order_acquire);
+            if((current & phase_bit) != (arrival & phase_bit))
+                return;
+#ifndef __NO_WAIT
+            atomic_wait(phase_arrived_expected, current, std::memory_order_relaxed);
+#endif
+        }
+    }
+
+	void arrive_and_wait() {
+        wait(arrive());
+	}
+    void arrive_and_drop() {
+        phase_arrived_expected.fetch_add(uint64_t(1), std::memory_order_relaxed);
+        (void)arrive();
+    }
+
+private:
+    std::atomic<uint64_t> phase_arrived_expected;
+};

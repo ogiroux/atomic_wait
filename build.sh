@@ -1,1 +1,1 @@
-g++ -std=c++11 -O2 sample.cpp -lstdc++ -lpthread -o sample
+g++ -Iinclude -std=c++17 -O2 sample.cpp lib/source.cpp -lstdc++ -lpthread -o sample
