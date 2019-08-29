@@ -28,6 +28,7 @@ THE SOFTWARE.
 //#define __NO_SEM
 //#define __NO_SEM_BACK
 //#define __NO_SEM_FRONT
+//#define __NO_SEM_POLL
 
 #if defined(__APPLE__) || defined(__linux__)
 	#define __semaphore_no_inline __attribute__ ((noinline))
@@ -36,11 +37,9 @@ THE SOFTWARE.
     #include <Windows.h>
 	#undef min
 	#undef max
-	#if !defined(__ALWAYS_SEM) && !defined(__NO_SEM)
-		#define __NO_SEM
-	#endif
 #else
-	#error "This implementation doesn't support this platform."
+    #define __semaphore_no_inline
+    #define __NO_SEM
 #endif
 
 #ifndef __NO_SEM
@@ -147,7 +146,7 @@ THE SOFTWARE.
 
 class __atomic_semaphore_base {
 
-    __semaphore_no_inline bool __fetch_sub_if_slow(ptrdiff_t old) {
+    __semaphore_no_inline inline bool __fetch_sub_if_slow(ptrdiff_t old) {
         while (old != 0) {
             if (count.compare_exchange_weak(old, old - 1, std::memory_order_acquire, std::memory_order_relaxed))
                 return true; 
@@ -163,7 +162,7 @@ class __atomic_semaphore_base {
             return true;
         return __fetch_sub_if_slow(old); // fail only if not available
     }
-    __semaphore_no_inline void __wait_slow() {
+    __semaphore_no_inline inline void __wait_slow() {
         while (1) {
             ptrdiff_t const old = count.load(std::memory_order_acquire);
             if(old != 0)
@@ -171,7 +170,7 @@ class __atomic_semaphore_base {
             atomic_wait(count, old, std::memory_order_relaxed);
         }
     }
-    __semaphore_no_inline bool __acquire_slow_timed(std::chrono::nanoseconds const& rel_time) {
+    __semaphore_no_inline inline bool __acquire_slow_timed(std::chrono::nanoseconds const& rel_time) {
 
         using __clock = std::conditional<std::chrono::high_resolution_clock::is_steady, 
                                          std::chrono::high_resolution_clock,
@@ -241,12 +240,64 @@ public:
 
 class __semaphore_base {
 
-    void __poll_a_bit() {
+    inline void __backfill() {
+#ifndef __NO_SEM_BACK
+        auto const back_amount = __backbuffer.fetch_sub(2, std::memory_order_acquire);
+        bool const post_one = back_amount > 0;
+        bool const post_two = back_amount > 1;
+        auto const success = (!post_one || __semaphore_sem_post(__semaphore, 1)) && 
+                             (!post_two || __semaphore_sem_post(__semaphore, 1));
+        assert(success);
+        if(!post_one || !post_two)
+            __backbuffer.fetch_add(!post_one ? 2 : 1, std::memory_order_relaxed);
+#endif
+    }
+    inline bool __try_acquire_fast() {
+#ifndef __NO_SEM_FRONT
+#ifndef __NO_SEM_POLL
         for(int i = 0; i < 32; ++i)
             if(__frontbuffer.load(std::memory_order_relaxed) > 0)
                 break;
             else
-                std::this_thread::yield();            
+                std::this_thread::yield();
+#endif
+        auto const old = __frontbuffer.fetch_sub(1, std::memory_order_acq_rel);
+        return old > 0; // after: non-negative
+#else
+        return false;
+#endif
+    }
+    inline void __try_failed() {
+#ifndef __NO_SEM_FRONT
+        __frontbuffer.fetch_add(1, std::memory_order_relaxed);
+#endif
+    }
+    __semaphore_no_inline inline void __release_slow(ptrdiff_t post_amount) {
+#ifdef __SEM_POST_ONE
+    #ifndef __NO_SEM_BACK
+        bool const post_one = post_amount > 0;
+        bool const post_two = post_amount > 1;
+        if(post_amount > 2)
+            __backbuffer.fetch_add(post_amount - 2, std::memory_order_acq_rel);
+        auto const success = (!post_one || __semaphore_sem_post(__semaphore, 1)) && 
+                             (!post_two || __semaphore_sem_post(__semaphore, 1));
+        assert(success);
+    #else
+        for(; post_amount; --post_amount) {
+            auto const success = __semaphore_sem_post(__semaphore, 1);
+            assert(success);
+        }
+    #endif
+#else
+        auto const success = __semaphore_sem_post(__semaphore, post_amount);
+        assert(success);
+#endif
+    }
+    __semaphore_no_inline inline bool __try_acquire_for_slow(std::chrono::nanoseconds const& rel_time) {
+        auto const result = __semaphore_sem_wait_timed(__semaphore, rel_time);
+        if(result)
+            __backfill();
+        return result;
     }
     __semaphore_sem_t __semaphore;
 #ifndef __NO_SEM_FRONT
@@ -289,76 +340,43 @@ public:
     __semaphore_base(const __semaphore_base&) = delete;
     __semaphore_base& operator=(const __semaphore_base&) = delete;
 
-    void release(ptrdiff_t update = 1) {
+    inline void release(ptrdiff_t update = 1) {
 #ifndef __NO_SEM_FRONT
         auto const old = __frontbuffer.fetch_add(update, std::memory_order_acq_rel);
-        if(old >= 0) // before: non-negative
+        if(__builtin_expect(old >= 0,1)) // before: non-negative
             return;
-        ptrdiff_t post_amount = std::min(update, -old);
+        __release_slow(std::min(update, -old));
 #else
-        ptrdiff_t post_amount = update;
-#endif
-#ifdef __SEM_POST_ONE
-        bool const post_one = post_amount > 0;
-        bool const post_two = post_amount > 1;
-        if(post_amount > 2)
-            __backbuffer.fetch_add(post_amount - 2, std::memory_order_acq_rel);
-        auto const success = (!post_one || __semaphore_sem_post(__semaphore, 1)) && 
-                             (!post_two || __semaphore_sem_post(__semaphore, 1));
-        assert(success);
-#else
-        auto const success = __semaphore_sem_post(__semaphore, post_amount);
-        assert(success);
-#endif
+        __release_slow(update);
+#endif        
     }
-    void __backfill() {
-#ifndef __NO_SEM_BACK
-        auto const back_amount = __backbuffer.fetch_sub(2, std::memory_order_acquire);
-        bool const post_one = back_amount > 0;
-        bool const post_two = back_amount > 1;
-        auto const success = (!post_one || __semaphore_sem_post(__semaphore, 1)) && 
-                             (!post_two || __semaphore_sem_post(__semaphore, 1));
-        assert(success);
-        if(!post_one || !post_two)
-            __backbuffer.fetch_add(!post_one ? 2 : 1, std::memory_order_relaxed);
-#endif
-    }
-    void acquire() {
-#ifndef __NO_SEM_FRONT
-        __poll_a_bit();
-        auto const old = __frontbuffer.fetch_sub(1, std::memory_order_acq_rel);
-        if(old > 0) // after: non-negative
+    inline void acquire() {
+        if(__builtin_expect(__try_acquire_fast(),1))
             return;
-#endif
         auto const success = __semaphore_sem_wait(__semaphore);
         assert(success);
         __backfill();
     }
-    bool try_acquire() noexcept {
+    inline bool try_acquire() noexcept {
         return try_acquire_for(std::chrono::nanoseconds(0));
     }
     template <class Clock, class Duration>
     bool try_acquire_until(std::chrono::time_point<Clock, Duration> const& abs_time) {
-        auto const current = Clock::now();
-        if(current > abs_time)
-            current = abs_time;
-        return try_acquire_for(abs_time - current);
+        if(__builtin_expect(__try_acquire_fast(),1))
+            return true;
+        auto const current = std::max(Clock::now(), abs_time);
+        auto const result = __try_acquire_for_slow(std::chrono::duration_cast<std::chrono::nanoseconds>(abs_time - current));
+        if(!result)
+            __try_failed();
+        return result;
     }
     template <class Rep, class Period>
     bool try_acquire_for(std::chrono::duration<Rep, Period> const& rel_time) {
-#ifndef __NO_SEM_FRONT
-        __poll_a_bit();
-        auto const old = __frontbuffer.fetch_sub(1, std::memory_order_acq_rel);
-        if(old > 0) // after: non-negative
+        if(__builtin_expect(__try_acquire_fast(),1))
             return true;
-#endif
-        auto const result = __semaphore_sem_wait_timed(__semaphore, rel_time);
-#ifndef __NO_SEM_FRONT
-        if(result)
-            __backfill();
-        else
-            __frontbuffer.fetch_add(1, std::memory_order_relaxed);
-#endif
+        auto const result = __try_acquire_for_slow(std::chrono::duration_cast<std::chrono::nanoseconds>(rel_time));
+        if(!result)
+            __try_failed();
         return result;
     }
 };
@@ -392,7 +410,7 @@ public:
 
 class __binary_semaphore_base {
 
-    __semaphore_no_inline bool __acquire_slow_timed(std::chrono::nanoseconds const& rel_time) {
+    __semaphore_no_inline inline bool __acquire_slow_timed(std::chrono::nanoseconds const& rel_time) {
 
         using __clock = std::conditional<std::chrono::high_resolution_clock::is_steady, 
                                          std::chrono::high_resolution_clock,
@@ -434,7 +452,7 @@ public:
         return 1 == available.exchange(0, std::memory_order_acquire);
     }
     template <class Clock, class Duration>
-    inline bool try_acquire_until(std::chrono::time_point<Clock, Duration> const& abs_time) {
+    bool try_acquire_until(std::chrono::time_point<Clock, Duration> const& abs_time) {
 
         if (__builtin_expect(try_acquire(), 1))
             return true;
@@ -442,7 +460,7 @@ public:
             return __acquire_slow_timed(abs_time - Clock::now());
     }
     template <class Rep, class Period>
-    inline bool try_acquire_for(std::chrono::duration<Rep, Period> const& rel_time) {
+    bool try_acquire_for(std::chrono::duration<Rep, Period> const& rel_time) {
 
         if (__builtin_expect(try_acquire(), 1))
             return true;
