@@ -73,85 +73,82 @@ void test(std::string const& name, int threads, F && f, bool use_omp = false) {
 	std::cout << name << " : " << d / sections << "ns per section." << std::endl;
 }
 
-int main() {
+template<class M>
+void test_mutex(std::string const& name, bool use_omp = false) {
 
     int const max = std::thread::hardware_concurrency();
-    std::cout << "System has " << max << " hardware threads." << std::endl;
-
     std::vector<std::pair<int, std::string>> const counts = 
         { { 1, "1 thread" }, 
           { 2, "2 threads" },
           { max, "full occupancy" },
           { max * 2, "double occupancy" } };
-
-#ifndef __NO_MUTEX
-
     for(auto const& c : counts) {
-        mutex m;
+        M m;
         auto f = [&](int n) {
             for (int i = 0; i < n; ++i) {
                 m.lock();
                 m.unlock();
             }
         };
-	    test("Spinlock: " + c.second, c.first, f);
+        test(name + ": " + c.second, c.first, f);
     }
+};
 
+template<class B>
+void test_barrier(std::string const& name, bool use_omp = false) {
+
+    int const max = std::thread::hardware_concurrency();
+    std::vector<std::pair<int, std::string>> const counts = 
+        { { 1, "1 thread" }, 
+          { 2, "2 threads" },
+          { max, "full occupancy" },
+          { max * 2, "double occupancy" } };
     for(auto const& c : counts) {
-        ticket_mutex t;
-        auto g = [&](int n) {
-            for (int i = 0; i < n; ++i) {
-                t.lock();
-                t.unlock();
-            }
-        };
-	    test("Ticket: " + c.second, c.first, g);
-    }
-
-    for(auto const& c : counts) {
-        sem_mutex t;
-        auto g = [&](int n) {
-            for (int i = 0; i < n; ++i) {
-                t.lock();
-                t.unlock();
-            }
-        };
-	    test("Semlock: " + c.second, c.first, g);
-    }
-
-#endif
-
-#ifndef __NO_BARRIER
-
-    for(auto const& c : counts) {
-        barrier b(c.first);
-        auto h = [&](int n) {
+        B b(c.first);
+        auto f = [&](int n) {
             for (int i = 0; i < n; ++i)
                 b.arrive_and_wait();
         };
-        test("Barrier: " + c.second, c.first, h);
+        test(name + ": " + c.second, c.first, f);
+    }
+};
+
+int main() {
+
+#ifndef __NO_MUTEX
+    test_mutex<mutex>("Spinlock");
+    test_mutex<ticket_mutex>("Ticket");
+    test_mutex<sem_mutex>("Semlock");
+#endif
+
+#ifndef __NO_BARRIER
+    test_barrier<barrier<>>("Barrier");
+#endif
 
 #if defined(_POSIX_THREADS) && !defined(__APPLE__)
+    struct posix_barrier {
+        posix_barrier(ptrdiff_t count) {
+            pthread_barrier_init(&pb, nullptr, count);
+        }
+        ~posix_barrier() {
+            pthread_barrier_destroy(&pb);
+        }
+        void arrive_and_wait() {
+            pthread_barrier_wait(&pb);
+        }
         pthread_barrier_t pb;
-        pthread_barrier_init(&pb, nullptr, c.first);
-        auto i = [&](int n) {
-            for (int i = 0; i < n; ++i)
-                pthread_barrier_wait(&pb);
-        };
-        test("Pthread: " + c.second, c.first, i);
-        pthread_barrier_destroy(&pb);
+    };
+    test_barrier<posix_barrier>("Pthread");        
 #endif
 
 #ifdef _OPENMP
-        auto o = [&](int n) {
-            for (int i = 0; i < n; ++i) {
-                #pragma omp barrier
-            }
-        };
-	    test("OMP: " + c.second, c.first, o, true);
-#endif
-    }
-
+    struct omp_barrier {
+        omp_barrier(ptrdiff_t) { }
+        void arrive_and_wait() {
+            #pragma omp barrier
+        }
+    };
+    test_barrier<posix_barrier>("OMP", true);
 #endif
 
 	return 0;
