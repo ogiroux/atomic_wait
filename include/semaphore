@@ -89,7 +89,7 @@ THE SOFTWARE.
     #define __SEM_POST_ONE
     static constexpr ptrdiff_t __semaphore_max = SEM_VALUE_MAX;
     using __semaphore_sem_t = sem_t;
-
+    
     inline bool __semaphore_sem_init(__semaphore_sem_t &sem, int init) {
         return sem_init(&sem, 0, init) == 0;
     }
@@ -256,18 +256,21 @@ class __semaphore_base {
 #ifndef __NO_SEM_FRONT
     std::atomic<ptrdiff_t> __frontbuffer;
 #endif
-//#ifndef __NO_SEM_BACK
-//    std::atomic<ptrdiff_t> __backbuffer;
-//#endif
+#ifndef __NO_SEM_BACK
+    std::atomic<ptrdiff_t> __backbuffer;
+#endif
 
 public:
     static constexpr ptrdiff_t max() noexcept {
         return __semaphore_max;
     }
     
-    __semaphore_base(ptrdiff_t count = 0)
+    __semaphore_base(ptrdiff_t count = 0) : __semaphore()
 #ifndef __NO_SEM_FRONT
-    : __frontbuffer(count)
+    , __frontbuffer(count)
+#endif
+#ifndef __NO_SEM_BACK
+    , __backbuffer(0)
 #endif
     { 
         assert(count <= max());
@@ -300,13 +303,28 @@ public:
         ptrdiff_t post_amount = update;
 #endif
 #ifdef __SEM_POST_ONE
-        for(; post_amount != 0; --post_amount) {
-            auto const success = __semaphore_sem_post(__semaphore, 1);
-            assert(success);
-        }
+        bool const post_one = post_amount > 0;
+        bool const post_two = post_amount > 1;
+        if(post_amount > 2)
+            __backbuffer.fetch_add(post_amount - 2, std::memory_order_acq_rel);
+        auto const success = (!post_one || __semaphore_sem_post(__semaphore, 1)) && 
+                             (!post_two || __semaphore_sem_post(__semaphore, 1));
+        assert(success);
 #else
         auto const success = __semaphore_sem_post(__semaphore, post_amount);
         assert(success);
+#endif
+    }
+    void __backfill() {
+#ifndef __NO_SEM_BACK
+        auto const back_amount = __backbuffer.fetch_sub(2, std::memory_order_acquire);
+        bool const post_one = back_amount > 0;
+        bool const post_two = back_amount > 1;
+        auto const success = (!post_one || __semaphore_sem_post(__semaphore, 1)) && 
+                             (!post_two || __semaphore_sem_post(__semaphore, 1));
+        assert(success);
+        if(!post_one || !post_two)
+            __backbuffer.fetch_add(!post_one ? 2 : 1, std::memory_order_relaxed);
 #endif
     }
     void acquire() {
@@ -318,6 +336,7 @@ public:
 #endif
         auto const success = __semaphore_sem_wait(__semaphore);
         assert(success);
+        __backfill();
     }
     bool try_acquire() noexcept {
         return try_acquire_for(std::chrono::nanoseconds(0));
@@ -339,7 +358,9 @@ public:
 #endif
         auto const result = __semaphore_sem_wait_timed(__semaphore, rel_time);
 #ifndef __NO_SEM_FRONT
-        if(!result)
+        if(result)
+            __backfill();
+        else
             __frontbuffer.fetch_add(1, std::memory_order_relaxed);
 #endif
         return result;
