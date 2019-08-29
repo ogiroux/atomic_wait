@@ -22,6 +22,10 @@ THE SOFTWARE.
 
 */
 
+// TODO: tune wakeup chains on release( large number ) with back buffer
+
+// TODO: add some polling on the front buffer so performance isn't so bad
+
 #include <algorithm>
 #include "atomic_wait"
 
@@ -241,6 +245,13 @@ public:
 
 class __semaphore_base {
 
+    void __poll_a_bit() {
+        for(int i = 0; i < 32; ++i)
+            if(__frontbuffer.load(std::memory_order_relaxed) > 0)
+                break;
+            else
+                std::this_thread::yield();            
+    }
     __semaphore_sem_t __semaphore;
 #ifndef __NO_SEM_FRONT
     std::atomic<ptrdiff_t> __frontbuffer;
@@ -300,6 +311,7 @@ public:
     }
     void acquire() {
 #ifndef __NO_SEM_FRONT
+        __poll_a_bit();
         auto const old = __frontbuffer.fetch_sub(1, std::memory_order_acq_rel);
         if(old > 0) // after: non-negative
             return;
@@ -320,6 +332,7 @@ public:
     template <class Rep, class Period>
     bool try_acquire_for(std::chrono::duration<Rep, Period> const& rel_time) {
 #ifndef __NO_SEM_FRONT
+        __poll_a_bit();
         auto const old = __frontbuffer.fetch_sub(1, std::memory_order_acq_rel);
         if(old > 0) // after: non-negative
             return true;
