@@ -22,10 +22,6 @@ THE SOFTWARE.
 
 */
 
-// TODO: tune wakeup chains on release( large number ) with back buffer
-
-// TODO: add some polling on the front buffer so performance isn't so bad
-
 #include <algorithm>
 #include "atomic_wait"
 
