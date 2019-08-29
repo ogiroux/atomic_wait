@@ -255,11 +255,9 @@ class __semaphore_base {
     inline bool __try_acquire_fast() {
 #ifndef __NO_SEM_FRONT
 #ifndef __NO_SEM_POLL
-        for(int i = 0; i < 32; ++i)
-            if(__frontbuffer.load(std::memory_order_relaxed) > 0)
-                break;
-            else
-                std::this_thread::yield();
+        (void)__cxx_atomic_poll((const ptrdiff_t*)&__frontbuffer, 
+                                [](ptrdiff_t loaded) -> bool { return loaded > 0; }, 
+                                std::memory_order_relaxed);
 #endif
         auto const old = __frontbuffer.fetch_sub(1, std::memory_order_acq_rel);
         return old > 0; // after: non-negative

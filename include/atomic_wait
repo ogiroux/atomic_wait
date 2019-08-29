@@ -51,6 +51,7 @@ The strategy is chosen this way, by platform:
 //#define __NO_IDENT
 
 // To benchmark against spinning
+//#define __NO_SPIN
 //#define __NO_WAIT
 
 #ifndef __ATOMIC_WAIT_INCLUDED
@@ -317,17 +318,29 @@ The strategy is chosen this way, by platform:
 
 #endif // __FUTEX || __CONDVAR
 
+template <class _Tp, class _F>
+[[nodiscard]] __ABI bool __cxx_atomic_poll(_Tp const* ptr, _F && f, int order) {
+#ifndef __NO_SPIN
+    for(int i = 0; i < 32; ++i)
+        if(__builtin_expect(f(__atomic_load_n(ptr, order)),1))
+            return true;
+        else if(i < 16)
+            __YIELD_PROCESSOR();
+        else
+            __YIELD();
+#endif
+    return false;
+}
+
 template <class _Tp>
 __ABI void __cxx_atomic_wait(_Tp const* ptr, _Tp const val, int order) {
-    for(int i = 0; i < 16; ++i)
-        if(__builtin_expect(val != __atomic_load_n(ptr, order),1))
-            return;
-        else if(i < 8)
-            __YIELD_PROCESSOR();
-        else if(i < 16)
-            __YIELD();
+    if(__cxx_atomic_poll(ptr, [val](_Tp loaded) -> bool { return loaded != val; }, order))
+        return;
     while(val == __atomic_load_n(ptr, order))
-        __cxx_atomic_try_wait_slow(ptr, val, order);
+#ifndef __NO_WAIT
+        __cxx_atomic_try_wait_slow(ptr, val, order)
+#endif
+        ;
 }
 
 #include <atomic>
