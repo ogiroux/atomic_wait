@@ -321,15 +321,18 @@ The strategy is chosen this way, by platform:
 template <class _Tp, class _F>
 [[nodiscard]] __ABI bool __cxx_atomic_poll(_Tp const* ptr, _F && f, int order) {
 #ifndef __NO_SPIN
-    for(int i = 0; i < 32; ++i)
-        if(__builtin_expect(f(__atomic_load_n(ptr, order)),1))
-            return true;
-        else if(i < 16)
+    if(__builtin_expect(f(__atomic_load_n(ptr, order)),1))
+        return true;
+    for(int j = 0; j < 2; ++j) {
+        for(int i = 0; i < 16; ++i) {
+            if(f(__atomic_load_n(ptr, order)))
+                return true;    
             __YIELD_PROCESSOR();
-        else
-            __YIELD();
+        }
+        __YIELD();
+    }
 #endif
-    return false;
+    return f(__atomic_load_n(ptr, order));
 }
 
 template <class _Tp>

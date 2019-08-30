@@ -81,6 +81,9 @@ THE SOFTWARE.
     #include <sched.h>
     #include <semaphore.h>
 
+    #ifndef __NO_SEM_POLL
+        #define __NO_SEM_POLL
+    #endif
     #define __SEM_POST_ONE
     static constexpr ptrdiff_t __semaphore_max = SEM_VALUE_MAX;
     using __semaphore_sem_t = sem_t;
