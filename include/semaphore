@@ -257,9 +257,18 @@ class __semaphore_base {
     inline bool __try_acquire_fast() {
 #ifndef __NO_SEM_FRONT
 #ifndef __NO_SEM_POLL
-        (void)__cxx_atomic_poll((const ptrdiff_t*)&__frontbuffer, 
-                                [](ptrdiff_t loaded) -> bool { return loaded > 0; }, 
-                                std::memory_order_relaxed);
+        if(__builtin_expect(__frontbuffer.load(std::memory_order_relaxed) <= 0,0)) {
+            using __clock = std::conditional<std::chrono::high_resolution_clock::is_steady, 
+                                             std::chrono::high_resolution_clock,
+                                             std::chrono::steady_clock>::type;
+            auto const start = __clock::now();
+            while (__frontbuffer.load(std::memory_order_relaxed) <= 0) {
+                auto const elapsed = std::chrono::duration_cast<std::chrono::nanoseconds>(__clock::now() - start);
+                if(elapsed > std::chrono::microseconds(5))
+                    break;
+                std::this_thread::sleep_for((elapsed + std::chrono::nanoseconds(100)) / 4);
+            }
+        }
 #endif
         auto const old = __frontbuffer.fetch_sub(1, std::memory_order_acq_rel);
         return old > 0; // after: non-negative
