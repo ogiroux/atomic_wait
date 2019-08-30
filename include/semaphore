@@ -114,7 +114,6 @@ THE SOFTWARE.
 #if defined(_WIN32)
 
     #define __NO_SEM_BACK
-    #define __builtin_expect(a,b)
 
     static constexpr ptrdiff_t __semaphore_max = std::numeric_limits<long>::max();
     using __semaphore_sem_t = HANDLE;

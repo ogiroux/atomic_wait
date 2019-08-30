@@ -57,7 +57,7 @@ using sum_mean_dev_t = std::tuple<int, double, double>;
 template<class V>
 sum_mean_dev_t sum_mean_dev(V && v) {
     assert(!v.empty());
-    auto const sum = std::accumulate(v.begin(), v.end(), 0.0);
+    auto const sum = std::accumulate(v.begin(), v.end(), 0);
     auto const mean = sum / v.size();
     auto const sq_diff_sum = std::accumulate(v.begin(), v.end(), 0.0, [=](auto left, auto right) -> auto {
         return left + (right - mean) * (right - mean);
@@ -93,6 +93,7 @@ sum_mean_dev_t test_omp_body(int threads, F && f) {
     return mean_dev(progress);
 #else
     assert(0); // build with -fopenmp
+	return sum_mean_dev_t();
 #endif
 }
 
