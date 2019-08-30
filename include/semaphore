@@ -170,7 +170,7 @@ class __atomic_semaphore_base {
             ptrdiff_t const old = count.load(std::memory_order_acquire);
             if(old != 0)
                 break;
-            atomic_wait(count, old, std::memory_order_relaxed);
+            atomic_wait_explicit(&count, old, std::memory_order_relaxed);
         }
     }
     __semaphore_no_inline inline bool __acquire_slow_timed(std::chrono::nanoseconds const& rel_time) {
@@ -209,9 +209,9 @@ public:
     inline void release(ptrdiff_t update = 1) {
         count.fetch_add(update, std::memory_order_release);
         if(update > 1)
-            atomic_notify_all(count);
+            atomic_notify_all(&count);
         else
-            atomic_notify_one(count);
+            atomic_notify_one(&count);
     }
     inline void acquire() {
         while (!try_acquire())
@@ -451,11 +451,11 @@ public:
 
     inline void release(ptrdiff_t update = 1) {
         available.store(1, std::memory_order_release);
-        atomic_notify_one(available);
+        atomic_notify_one(&available);
     }
     inline void acquire() {
         while (!__builtin_expect(try_acquire(), 1))
-            atomic_wait(available, 0, std::memory_order_relaxed);
+            atomic_wait_explicit(&available, 0, std::memory_order_relaxed);
     }
 
     inline bool try_acquire() noexcept {

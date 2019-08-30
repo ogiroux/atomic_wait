@@ -51,7 +51,7 @@ public:
             arrived.store(new_expected, std::memory_order_relaxed);
             phase.store(old_phase + 1, std::memory_order_release);
 #ifndef __NO_WAIT
-            atomic_notify_all(phase);
+            atomic_notify_all(&phase);
 #endif
         }
         return old_phase;
@@ -59,7 +59,7 @@ public:
     void wait(arrival_token&& arrival) const {
         while(arrival == phase.load(std::memory_order_acquire))
 #ifndef __NO_WAIT
-            atomic_wait(phase, arrival, std::memory_order_relaxed)
+            atomic_wait_explicit(&phase, arrival, std::memory_order_relaxed)
 #endif
             ;
     }
@@ -110,7 +110,7 @@ public:
         if((old ^ (old + count_bit)) & phase_bit) {
             phase_arrived_expected.fetch_add((old & expected_mask) << 32, std::memory_order_relaxed);
 #ifndef __NO_WAIT
-            atomic_notify_all(phase_arrived_expected);
+            atomic_notify_all(&phase_arrived_expected);
 #endif
         }
         return old;
@@ -122,7 +122,7 @@ public:
             if((current & phase_bit) != (arrival & phase_bit))
                 return;
 #ifndef __NO_WAIT
-            atomic_wait(phase_arrived_expected, current, std::memory_order_relaxed);
+            atomic_wait_explicit(&phase_arrived_expected, current, std::memory_order_relaxed);
 #endif
         }
     }

@@ -38,7 +38,7 @@ public:
         assert(old >= update);
 #ifndef __NO_WAIT
         if(old == update)
-            atomic_notify_all(counter);
+            atomic_notify_all(&counter);
 #endif
     }
     inline bool try_wait() const noexcept {
@@ -50,7 +50,7 @@ public:
             if(current == 0) 
                 return;
 #ifndef __NO_WAIT
-            atomic_wait(counter, current, std::memory_order_relaxed)
+            atomic_wait_explicit(&counter, current, std::memory_order_relaxed)
 #endif
             ;
         }

@@ -33,14 +33,14 @@ struct mutex {
 	void lock() noexcept {
 		while (1 == l.exchange(1, std::memory_order_acquire))
 #ifndef __NO_WAIT
-			atomic_wait(l, 1, std::memory_order_relaxed)
+			atomic_wait_explicit(&l, 1, std::memory_order_relaxed)
 #endif
             ;
 	}
 	void unlock() noexcept {
 		l.store(0, std::memory_order_release);
 #ifndef __NO_WAIT
-		atomic_notify_one(l);
+		atomic_notify_one(&l);
 #endif
 	}
 	std::atomic<int> l = ATOMIC_VAR_INIT(0);
@@ -54,14 +54,14 @@ struct ticket_mutex {
             if(now == my)
                 return;
 #ifndef __NO_WAIT
-            atomic_wait(out, now, std::memory_order_relaxed);
+            atomic_wait_explicit(&out, now, std::memory_order_relaxed);
 #endif
         }
 	}
 	void unlock() noexcept {
 		out.fetch_add(1, std::memory_order_release);
 #ifndef __NO_WAIT
-		atomic_notify_all(out);
+		atomic_notify_all(&out);
 #endif
 	}
 	alignas(64) std::atomic<int> in = ATOMIC_VAR_INIT(0);
