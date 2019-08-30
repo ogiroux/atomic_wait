@@ -319,26 +319,19 @@ The strategy is chosen this way, by platform:
 #endif // __FUTEX || __CONDVAR
 
 template <class _Tp>
-[[nodiscard]] __ABI bool __cxx_atomic_poll(_Tp const* ptr, _Tp const val, int order) {
+__ABI void __cxx_atomic_wait(_Tp const* ptr, _Tp const val, int order) {
 #ifndef __NO_SPIN
     if(__builtin_expect(__atomic_load_n(ptr, order) != val,1))
-        return true;
+        return;
     for(int i = 0; i < 16; ++i) {
         if(__atomic_load_n(ptr, order) != val)
-            return true;    
+            return;
         if(i < 12)
             __YIELD_PROCESSOR();
         else
             __YIELD();
     }
 #endif
-    return false;
-}
-
-template <class _Tp>
-__ABI void __cxx_atomic_wait(_Tp const* ptr, _Tp const val, int order) {
-    if(__cxx_atomic_poll(ptr, val, order))
-        return;
     while(val == __atomic_load_n(ptr, order))
 #ifndef __NO_WAIT
         __cxx_atomic_try_wait_slow(ptr, val, order)
