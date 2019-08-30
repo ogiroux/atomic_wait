@@ -32,16 +32,19 @@ public:
     latch(const latch&) = delete;
     latch& operator=(const latch&) = delete;
 
-    void count_down(ptrdiff_t update = 1) {
-        counter.fetch_sub(1, std::memory_order_release);
+    inline void count_down(ptrdiff_t update = 1) {
+        assert(update > 0);
+        auto const old = counter.fetch_sub(update, std::memory_order_release);
+        assert(old >= update);
 #ifndef __NO_WAIT
-        atomic_notify_all(counter);
+        if(old == update)
+            atomic_notify_all(counter);
 #endif
     }
-    bool try_wait() const noexcept {
+    inline bool try_wait() const noexcept {
         return counter.load(std::memory_order_acquire) == 0;
     }
-    void wait() const {
+    inline void wait() const {
         while(1) {
             auto const current = counter.load(std::memory_order_acquire);
             if(current == 0) 
@@ -52,7 +55,7 @@ public:
             ;
         }
     }
-    void arrive_and_wait(ptrdiff_t update = 1) {
+    inline void arrive_and_wait(ptrdiff_t update = 1) {
         count_down(update);
         wait();
     }

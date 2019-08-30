@@ -25,7 +25,7 @@ THE SOFTWARE.
 #include "atomic_wait"
 
 class EmptyCompletionF {
-    void operator()() noexcept { }
+    inline void operator()() noexcept { }
 };
 
 template<class CompletionF = EmptyCompletionF>
@@ -104,7 +104,7 @@ public:
     barrier(barrier const&) = delete;
     barrier& operator=(barrier const&) = delete;
 
-    [[nodiscard]] arrival_token arrive(ptrdiff_t update = 1) {
+    [[nodiscard]] inline arrival_token arrive(ptrdiff_t update = 1) {
 
         auto const old = phase_arrived_expected.fetch_add(count_bit, std::memory_order_acq_rel);
         if((old ^ (old + count_bit)) & phase_bit) {
@@ -115,7 +115,7 @@ public:
         }
         return old;
     }
-    void wait(arrival_token&& arrival) const {
+    inline void wait(arrival_token&& arrival) const {
 
         while(1) {
             uint64_t const current = phase_arrived_expected.load(std::memory_order_acquire);
@@ -126,11 +126,10 @@ public:
 #endif
         }
     }
-
-	void arrive_and_wait() {
+	inline void arrive_and_wait() {
         wait(arrive());
 	}
-    void arrive_and_drop() {
+    inline void arrive_and_drop() {
         phase_arrived_expected.fetch_add(uint64_t(1), std::memory_order_relaxed);
         (void)arrive();
     }
