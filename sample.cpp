@@ -47,6 +47,7 @@ THE SOFTWARE.
 #include <iomanip>
 #include <numeric>
 #include <tuple>
+#include <set>
 
 #include "sample.hpp"
 
@@ -115,7 +116,7 @@ void test(std::string const& name, int threads, F && f, std::atomic<bool>& keep_
 	double const d = double(std::chrono::duration_cast<std::chrono::nanoseconds>(t2 - t1).count());
     std::cout << std::setprecision(2) << std::fixed;
 	std::cout << name << " : " << d / std::get<0>(smd) << "ns per step, fairness metric = " 
-                         << 100 * (1 - std::get<2>(smd) / std::get<1>(smd)) << "%." 
+                         << 100 * (1.0 - std::min(1.0, std::get<2>(smd) / std::get<1>(smd))) << "%." 
                          << std::endl;
 }
 
@@ -123,18 +124,24 @@ template<class F>
 void test_loop(F && f) {
     static int const max = std::thread::hardware_concurrency();
     static std::vector<std::pair<int, std::string>> const counts = 
-        { { 1, "1 thread" }, 
-          { 2, "2 threads" },
-          { 3, "3 threads" },
-          { 4, "4 threads" },
-          { 6, "6 threads" },
-          { max, "full occupancy" },
-#if !defined(__NO_SPIN) || !defined(__NO_WAIT)
-          { max * 2, "double occupancy" } 
-#endif
+        { { 1, "single-threaded" }, 
+          { max >> 5, "3% occupancy" },
+          { max >> 4, "6% occupancy" },
+          { max >> 3, "12% occupancy" },
+          { max >> 2, "25% occupancy" },
+          { max >> 1, "50% occupancy" },
+          { max, "100% occupancy" },
+//#if !defined(__NO_SPIN) || !defined(__NO_WAIT)
+//          { max * 2, "200% occupancy" } 
+//#endif
         };
-    for(auto const& c : counts)
+    std::set<int> done{0};
+    for(auto const& c : counts) {
+        if(done.find(c.first) != done.end())
+            continue;
         f(c);
+        done.insert(c.first);
+    }
 }
 
 template<class M>
