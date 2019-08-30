@@ -124,6 +124,9 @@ void test_loop(F && f) {
     static std::vector<std::pair<int, std::string>> const counts = 
         { { 1, "1 thread" }, 
           { 2, "2 threads" },
+          { 3, "3 threads" },
+          { 4, "4 threads" },
+          { 6, "6 threads" },
           { max, "full occupancy" },
 #if !defined(__NO_SPIN) || !defined(__NO_WAIT)
           { max * 2, "double occupancy" } 
