@@ -190,7 +190,7 @@ class alignas(64) barrier<EmptyCompletionF> {
     }
 
 public:
-    using arrival_token = __phase_t;
+    using arrival_token = std::tuple<std::atomic<__phase_t>&, __phase_t>;
 
     barrier(ptrdiff_t count, EmptyCompletionF = EmptyCompletionF()) 
             : expected(count), state(count) { 
@@ -217,22 +217,38 @@ public:
                 ;
         }
         if(0 == id) {
-            expected += expected_adjustment.exchange(0, std::memory_order_relaxed);
+            expected += expected_adjustment.load(std::memory_order_relaxed);
+            expected_adjustment.store(0, std::memory_order_relaxed);
             phase.store(__next_phase(old_phase), std::memory_order_release);
 #ifndef __NO_WAIT
-            atomic_notify_all(&phase);
+//            atomic_notify_all(&phase);
 #endif
         }
-        return old_phase;
+        return std::tie(phase, old_phase);
     }
-    inline void wait(arrival_token&& old_phase) const {
+    inline void wait(arrival_token&& token) const {
+        auto const& current_phase = std::get<0>(token);
+        auto const old_phase = std::get<1>(token);
+        /*
         while(1) {
-            auto const current = phase.load(std::memory_order_acquire);
+            auto const current = current_phase.load(std::memory_order_acquire);
             if(current != old_phase)
                 break;
 #ifndef __NO_WAIT
-            atomic_wait_explicit(&phase, current, std::memory_order_relaxed);
+//            atomic_wait_explicit(&phase, current, std::memory_order_relaxed);
 #endif
+        }
+        */
+        using __clock = std::conditional<std::chrono::high_resolution_clock::is_steady, 
+                                            std::chrono::high_resolution_clock,
+                                            std::chrono::steady_clock>::type;
+        auto const start = __clock::now();
+        while (old_phase == current_phase.load(std::memory_order_acquire)) {
+            auto const elapsed = std::chrono::duration_cast<std::chrono::nanoseconds>(__clock::now() - start);
+            auto const step = std::min((elapsed + std::chrono::nanoseconds(100)) / 4, 
+                                       std::chrono::nanoseconds(5000));
+            if(step > std::chrono::nanoseconds(1000))
+                std::this_thread::sleep_for(step);
         }
     }
 	inline void arrive_and_wait() {
