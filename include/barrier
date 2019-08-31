@@ -239,16 +239,20 @@ public:
 #endif
         }
         */
+        if(__builtin_expect(old_phase != current_phase.load(std::memory_order_acquire),1))
+            return;
         using __clock = std::conditional<std::chrono::high_resolution_clock::is_steady, 
                                             std::chrono::high_resolution_clock,
                                             std::chrono::steady_clock>::type;
         auto const start = __clock::now();
         while (old_phase == current_phase.load(std::memory_order_acquire)) {
             auto const elapsed = std::chrono::duration_cast<std::chrono::nanoseconds>(__clock::now() - start);
-            auto const step = std::min((elapsed + std::chrono::nanoseconds(100)) / 4, 
+            auto const step = std::min(elapsed / 4 + std::chrono::nanoseconds(100), 
                                        std::chrono::nanoseconds(5000));
             if(step > std::chrono::nanoseconds(1000))
                 std::this_thread::sleep_for(step);
+            else if(step > std::chrono::nanoseconds(200))
+                std::this_thread::yield();
         }
     }
 	inline void arrive_and_wait() {
