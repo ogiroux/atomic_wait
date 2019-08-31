@@ -23,6 +23,7 @@ THE SOFTWARE.
 */
 
 #include <atomic_wait>
+#include <barrier>
 
 #ifdef __TABLE
 
@@ -33,3 +34,9 @@ contended_t * __contention(volatile void const * p) {
 }
 
 #endif //__TABLE
+
+#ifndef __NO_BARRIER_TLS
+
+thread_local size_t barrier<EmptyCompletionF>::__id;
+
+#endif

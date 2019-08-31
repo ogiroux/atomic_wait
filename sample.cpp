@@ -181,13 +181,13 @@ int main() {
 
     int const max = std::thread::hardware_concurrency();
     std::cout << "System has " << max << " hardware threads." << std::endl;
-
+/*
 #ifndef __NO_MUTEX
     test_mutex<sem_mutex>("Semlock");
     test_mutex<mutex>("Spinlock");
     test_mutex<ticket_mutex>("Ticket");
 #endif
-
+*/
 #ifndef __NO_BARRIER
     test_barrier<barrier<>>("Barrier");
 #endif
