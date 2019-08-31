@@ -229,16 +229,6 @@ public:
     inline void wait(arrival_token&& token) const {
         auto const& current_phase = std::get<0>(token);
         auto const old_phase = std::get<1>(token);
-        /*
-        while(1) {
-            auto const current = current_phase.load(std::memory_order_acquire);
-            if(current != old_phase)
-                break;
-#ifndef __NO_WAIT
-//            atomic_wait_explicit(&phase, current, std::memory_order_relaxed);
-#endif
-        }
-        */
         if(__builtin_expect(old_phase != current_phase.load(std::memory_order_acquire),1))
             return;
         using __clock = std::conditional<std::chrono::high_resolution_clock::is_steady, 
@@ -248,10 +238,10 @@ public:
         while (old_phase == current_phase.load(std::memory_order_acquire)) {
             auto const elapsed = std::chrono::duration_cast<std::chrono::nanoseconds>(__clock::now() - start);
             auto const step = std::min(elapsed / 4 + std::chrono::nanoseconds(100), 
-                                       std::chrono::nanoseconds(5000));
+                                       std::chrono::nanoseconds(1500));
             if(step > std::chrono::nanoseconds(1000))
                 std::this_thread::sleep_for(step);
-            else if(step > std::chrono::nanoseconds(200))
+            else if(step > std::chrono::nanoseconds(500))
                 std::this_thread::yield();
         }
     }
