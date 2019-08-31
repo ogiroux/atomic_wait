@@ -88,10 +88,10 @@ template <class F>
 sum_mean_dev_t test_omp_body(int threads, F && f) {
 #ifdef _OPENMP
     std::vector<int> progress(threads, 0);
-    #pragma omp parallel_for num_threads(threads)
+    #pragma omp parallel for num_threads(threads)
     for (int i = 0; i < threads; ++i)
         progress[i] = f(sections / threads);
-    return mean_dev(progress);
+    return sum_mean_dev(progress);
 #else
     assert(0); // build with -fopenmp
 	return sum_mean_dev_t();
@@ -192,6 +192,16 @@ int main() {
     test_barrier<barrier<>>("Barrier");
 #endif
 
+#ifdef _OPENMP
+    struct omp_barrier {
+        omp_barrier(ptrdiff_t) { }
+        void arrive_and_wait() {
+            #pragma omp barrier
+        }
+    };
+    test_barrier<omp_barrier>("OMP", true);
+#endif
+/*
 #if defined(_POSIX_THREADS) && !defined(__APPLE__)
     struct posix_barrier {
         posix_barrier(ptrdiff_t count) {
@@ -205,18 +215,8 @@ int main() {
         }
         pthread_barrier_t pb;
     };
-    test_barrier<posix_barrier>("Pthread");        
+    test_barrier<posix_barrier>("Pthread");
 #endif
-
-#ifdef _OPENMP
-    struct omp_barrier {
-        omp_barrier(ptrdiff_t) { }
-        void arrive_and_wait() {
-            #pragma omp barrier
-        }
-    };
-    test_barrier<posix_barrier>("OMP", true);
-#endif
-
+*/
 	return 0;
 }
