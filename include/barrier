@@ -157,13 +157,15 @@ class barrier<EmptyCompletionF> {
     using __phase_t = uint8_t;
     static constexpr __phase_t __next_phase(__phase_t old) { return (old + 1) & 3; }
 
-    std::atomic<__phase_t> _phase = {0};
-    std::atomic<__phase_t> state[256][10] = {0};
+    struct alignas(64) {
+        std::atomic<__phase_t> _phase = {0};
+        std::atomic<ptrdiff_t> expected;
+        std::atomic<bool> rehash = ATOMIC_VAR_INIT(true);
+    };
 
-    std::atomic<uint64_t> checker = {0};
-
-    std::atomic<ptrdiff_t> expected;
-    std::atomic<bool> rehash = ATOMIC_VAR_INIT(true);
+    struct alignas(64) {
+        std::atomic<__phase_t> v[10];
+    } state[256] = {0};
 
     inline size_t __my_id(__phase_t const phase, ptrdiff_t count) {
 
@@ -176,7 +178,7 @@ class barrier<EmptyCompletionF> {
             __id = hasher(std::this_thread::get_id()) % count;
         for(int i = 0; i < count; ++i) {
             auto const id = __id;
-            auto const old = state[id][0].exchange(__next_phase(phase), std::memory_order_relaxed);
+            auto const old = state[id].v[0].exchange(__next_phase(phase), std::memory_order_relaxed);
             if(old == phase)
                 return id;
             assert(old == __next_phase(phase));
@@ -204,20 +206,17 @@ public:
 
     [[nodiscard]] inline arrival_token arrive(ptrdiff_t update = 1) {
 
-        checker.fetch_add(1, std::memory_order_relaxed);
-
         auto const old_phase = _phase.load(std::memory_order_relaxed);
         auto const count = expected.load(std::memory_order_relaxed);
         auto const id = __my_id(old_phase, count);
         auto const steps = __log2(count) + 1;
         if(steps != 1)
             for(uint32_t k = 0;k < steps; ++k) {
-                state[(id + (1 << k)) % count][k+1].store(__next_phase(old_phase), std::memory_order_release);
-                while(state[id][k+1].load(std::memory_order_acquire) == old_phase)
+                state[(id + (1 << k)) % count].v[k+1].store(__next_phase(old_phase), std::memory_order_release);
+                while(state[id].v[k+1].load(std::memory_order_acquire) == old_phase)
                     ;
             }
         if(0 == id) {
-            assert(checker.load(std::memory_order_relaxed) % count == 0);
             rehash.store(false, std::memory_order_relaxed);
             _phase.store(__next_phase(old_phase), std::memory_order_release);
 #ifndef __NO_WAIT
