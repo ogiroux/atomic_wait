@@ -24,6 +24,7 @@ THE SOFTWARE.
 
 #include <atomic_wait>
 #include <barrier>
+#include <thread>
 
 #ifdef __TABLE
 
@@ -35,8 +36,7 @@ contended_t * __contention(volatile void const * p) {
 
 #endif //__TABLE
 
-#ifndef __NO_BARRIER_TLS
+std::hash<std::thread::id> const barrier<EmptyCompletionF>::hasher;
 
-thread_local size_t barrier<EmptyCompletionF>::__id;
-
-#endif
+thread_local size_t              barrier<EmptyCompletionF>::favorite_hash = 
+    barrier<EmptyCompletionF>::hasher(std::this_thread::get_id());
