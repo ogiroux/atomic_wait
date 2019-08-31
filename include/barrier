@@ -151,7 +151,7 @@ class barrier<EmptyCompletionF> {
     std::atomic<ptrdiff_t>                  expected;
 
     using __phase_t = uint8_t;    
-//    std::atomic<__phase_t>                  phase = {0};
+    std::atomic<__phase_t>                  phase = {0};
 
     struct alignas(64) __state_t {
         std::atomic<__phase_t> v[64] = {0};
@@ -201,7 +201,7 @@ public:
 
     [[nodiscard]] inline arrival_token arrive(ptrdiff_t update = 1) {
 
-        auto const old_phase = state[0].v[0].load(std::memory_order_relaxed);
+        auto const old_phase = phase.load(std::memory_order_relaxed);
         auto const count = expected.load(std::memory_order_relaxed);
         assert(count > 0);
         auto const id = __my_id(old_phase, count);
@@ -209,29 +209,25 @@ public:
         auto const steps = __log2(count) + 1;
         for(uint32_t k = 0;k < steps; ++k) {
             auto const index = steps - k - 1;
-            auto const address = (id + (1 << k)) % count;
-            auto& location = state[address].v[index];
-            location.store(__next_phase(old_phase), std::memory_order_release);
-//            if(0 == index) {
+            state[(id + (1 << k)) % count].v[index].store(__next_phase(old_phase), std::memory_order_release);
+            while(state[id].v[index].load(std::memory_order_acquire) == old_phase)
+                ;
+        }
+        if(0 == id) {
+            phase.store(__next_phase(old_phase), std::memory_order_release);
 #ifndef __NO_WAIT
-//                if(0 == address)
-//                    atomic_notify_all(&location);
+            atomic_notify_all(&phase);
 #endif
-//            }
-//            else
-                while(state[id].v[index].load(std::memory_order_acquire) == old_phase)
-                    ;
         }
         return old_phase;
     }
     inline void wait(arrival_token&& old_phase) const {
-        auto const& location = state[0].v[0];
         while(1) {
-            auto const current = location.load(std::memory_order_acquire);
+            auto const current = phase.load(std::memory_order_acquire);
             if(current != old_phase)
                 break;
 #ifndef __NO_WAIT
-//            atomic_wait_explicit(&location, current, std::memory_order_relaxed);
+            atomic_wait_explicit(&phase, current, std::memory_order_relaxed);
 #endif
         }
     }
