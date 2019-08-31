@@ -209,8 +209,8 @@ public:
         auto const old_phase = _phase.load(std::memory_order_relaxed);
         auto const count = expected.load(std::memory_order_relaxed);
         auto const id = __my_id(old_phase, count);
-        auto const steps = __log2(count);
-        if(steps != 0)
+        auto const steps = __log2(count) + 1;
+        if(steps != 1)
             for(uint32_t k = 0;k < steps; ++k) {
                 state[(id + (1 << k)) % count][k+1].store(__next_phase(old_phase), std::memory_order_release);
                 while(state[id][k+1].load(std::memory_order_acquire) == old_phase)
