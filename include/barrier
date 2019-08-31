@@ -22,6 +22,7 @@ THE SOFTWARE.
 
 */
 
+#include <cstddef>
 #include <thread>
 #include "atomic_wait"
 
