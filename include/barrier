@@ -212,13 +212,13 @@ public:
             auto const address = (id + (1 << k)) % count;
             auto& location = state[address].v[index];
             location.store(__next_phase(old_phase), std::memory_order_release);
-            if(0 == index) {
+//            if(0 == index) {
 #ifndef __NO_WAIT
-                if(0 == address)
-                    atomic_notify_all(&location);
+//                if(0 == address)
+//                    atomic_notify_all(&location);
 #endif
-            }
-            else
+//            }
+//            else
                 while(state[id].v[index].load(std::memory_order_acquire) == old_phase)
                     ;
         }
@@ -231,7 +231,7 @@ public:
             if(current != old_phase)
                 break;
 #ifndef __NO_WAIT
-            atomic_wait_explicit(&location, current, std::memory_order_relaxed);
+//            atomic_wait_explicit(&location, current, std::memory_order_relaxed);
 #endif
         }
     }
