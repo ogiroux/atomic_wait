@@ -49,12 +49,10 @@ class alignas(64) barrier {
         std::atomic<__phase_t> v[__max_steps + 1] = {0};
     };
 
-    struct alignas(64) {
-        ptrdiff_t                          expected;
-        ptrdiff_t                          expected_steps;
-        std::atomic<ptrdiff_t>             expected_adjustment = {0};
-        std::atomic<__phase_t>             phase = {0};
-    };
+    alignas(64) ptrdiff_t              expected;
+    ptrdiff_t                          expected_steps;
+    std::atomic<ptrdiff_t>             expected_adjustment;
+    std::atomic<__phase_t>             phase;
     alignas(64) std::vector<__state_t> state;
     CompletionF                        completion;
 
@@ -92,6 +90,7 @@ public:
 
     barrier(ptrdiff_t expected, CompletionF completion = CompletionF()) 
             : expected(expected), expected_steps(__log2_ceil(expected)), 
+              expected_adjustment(0), phase(0),
               state(expected), completion(completion) { 
         assert(expected >= 0);
     }
