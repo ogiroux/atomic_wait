@@ -29,6 +29,7 @@ THE SOFTWARE.
 
 //#define __BARRIER_NO_BUTTERFLY
 //#define __BARRIER_NO_WAIT
+//#define __BARRIER_NO_SPECIALIZATION
 
 struct EmptyCompletionF {
     inline void operator()() noexcept { }
@@ -39,7 +40,7 @@ struct EmptyCompletionF {
 extern thread_local size_t __barrier_favorite_hash;
 
 template<class CompletionF = EmptyCompletionF>
-class alignas(64) barrier {
+class barrier {
 
     static constexpr size_t __max_steps = CHAR_BIT * sizeof(ptrdiff_t) - 1;
 
@@ -162,11 +163,15 @@ public:
 
 template<class CompletionF = EmptyCompletionF>
 class barrier {
-public:
-    using arrival_token = unsigned;
 
-    barrier(ptrdiff_t count, CompletionF completion = CompletionF()) 
-        : phase(0), arrived(count), expected(count), completion(completion) { 
+    alignas(64) std::atomic<bool> phase;
+    std::atomic<ptrdiff_t> expected, arrived;
+    CompletionF completion;
+public:
+    using arrival_token = bool;
+
+    barrier(ptrdiff_t expected, CompletionF completion = CompletionF()) 
+        : phase(false), expected(expected), arrived(expected), completion(completion) { 
     }
 
     ~barrier() = default;
@@ -176,24 +181,26 @@ public:
 
     [[nodiscard]] arrival_token arrive(ptrdiff_t update = 1) {
         auto const old_phase = phase.load(std::memory_order_relaxed);
-        auto const result = arrived.fetch_sub(update, std::memory_order_release) - update;
+        auto const result = arrived.fetch_sub(update, std::memory_order_acq_rel) - update;
+        assert(result >= 0);
         auto const new_expected = expected.load(std::memory_order_relaxed);
         if(0 == result) {
             completion();
             arrived.store(new_expected, std::memory_order_relaxed);
-            phase.store(old_phase + 1, std::memory_order_release);
+            phase.store(!old_phase, std::memory_order_release);
 #ifndef __BARRIER_NO_WAIT
             atomic_notify_all(&phase);
 #endif
         }
         return old_phase;
     }
-    void wait(arrival_token&& arrival) const {
-        while(arrival == phase.load(std::memory_order_acquire))
+    void wait(arrival_token&& old_phase) const {
 #ifndef __BARRIER_NO_WAIT
-            atomic_wait_explicit(&phase, arrival, std::memory_order_relaxed)
-#endif
+        atomic_wait_explicit(&phase, old_phase, std::memory_order_acquire);
+#else
+        while(old_phase == phase.load(std::memory_order_acquire))
             ;
+#endif
     }
 	void arrive_and_wait() {
         wait(arrive());
@@ -202,13 +209,9 @@ public:
         expected.fetch_sub(1, std::memory_order_relaxed);
         (void)arrive();
     }
-
-private:
-    std::atomic<ptrdiff_t> phase, 
-                           arrived, 
-                           expected;
-    CompletionF completion;
 };
+
+#ifndef __BARRIER_NO_SPECIALIZATION
 
 template< >
 class barrier<EmptyCompletionF> {
@@ -216,8 +219,10 @@ class barrier<EmptyCompletionF> {
     static constexpr uint64_t expected_unit = 1ull;
     static constexpr uint64_t arrived_unit = 1ull << 32;
     static constexpr uint64_t expected_mask = arrived_unit - 1;
-    static constexpr uint64_t phase_bit = arrived_unit << 63;
+    static constexpr uint64_t phase_bit = 1ull << 63;
     static constexpr uint64_t arrived_mask = (phase_bit - 1) & ~expected_mask;
+
+    alignas(64) std::atomic<uint64_t> phase_arrived_expected;
 
     static inline constexpr uint64_t __init(ptrdiff_t count) noexcept {
         uint64_t const comp = (1u << 31) - count;
@@ -255,8 +260,6 @@ public:
                 return;
 #ifndef __BARRIER_NO_WAIT
             atomic_wait_explicit(&phase_arrived_expected, current, std::memory_order_relaxed);
-#else
-            std::this_thread::yield();
 #endif
         }
     }
@@ -267,9 +270,8 @@ public:
         phase_arrived_expected.fetch_add(expected_unit, std::memory_order_relaxed);
         (void)arrive();
     }
-
-private:
-    std::atomic<uint64_t> phase_arrived_expected;
 };
 
-#endif
+#endif //__BARRIER_NO_SPECIALIZATION
+
+#endif //__BARRIER_NO_BUTTERFLY
