@@ -36,7 +36,5 @@ contended_t * __contention(volatile void const * p) {
 
 #endif //__TABLE
 
-std::hash<std::thread::id> const barrier<EmptyCompletionF>::hasher;
-
-thread_local size_t              barrier<EmptyCompletionF>::favorite_hash = 
-    barrier<EmptyCompletionF>::hasher(std::this_thread::get_id());
+thread_local size_t __barrier_favorite_hash =
+    std::hash<std::thread::id>()(std::this_thread::get_id());
