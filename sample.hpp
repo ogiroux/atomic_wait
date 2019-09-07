@@ -75,5 +75,5 @@ struct sem_mutex {
 	void unlock() noexcept {
         c.release();
 	}
-	binary_semaphore c = 1;
+	std::binary_semaphore c = 1;
 };

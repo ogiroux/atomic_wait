@@ -24,6 +24,8 @@ THE SOFTWARE.
 
 #include "atomic_wait"
 
+namespace std {
+
 class latch {
 public:
     constexpr explicit latch(ptrdiff_t expected) : counter(expected) { }
@@ -63,3 +65,5 @@ public:
 private:
     std::atomic<ptrdiff_t> counter;
 };
+
+}
